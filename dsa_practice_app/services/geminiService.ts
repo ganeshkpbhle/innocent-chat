@@ -1,60 +1,41 @@
 
-import { GoogleGenAI, Chat, GenerateContentResponse } from "@google/genai";
+import { GoogleGenAI, GenerateContentResponse, Chat } from "@google/genai";
+import { ChatMode } from "../types";
 
-const SYSTEM_INSTRUCTION = `
-You are a world-class Data Structures and Algorithms (DSA) Mentor. 
-Your goal is to help the user master technical interviews and algorithmic thinking.
+const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || '' });
 
-Follow these rules:
-1. Don't provide full solutions immediately. Ask clarifying questions first.
-2. Provide hints that lead the user to the right path.
-3. When showing code, use high-quality, efficient implementations (Time/Space complexity noted).
-4. If a user asks for something non-technical, gently steer them back to DSA.
-5. Use clear Markdown formatting for explanations and code blocks.
-`;
+const MODE_MODELS = {
+  [ChatMode.FAST]: 'gemini-3-flash-preview',
+  [ChatMode.PRO]: 'gemini-3-pro-preview',
+  [ChatMode.THINKING]: 'gemini-3-pro-preview'
+};
 
-export class GeminiService {
-  private ai: GoogleGenAI;
-  private chatSession: Chat;
+export const createChatSession = (mode: ChatMode, history: { role: string; parts: { text: string }[] }[]) => {
+  const modelId = MODE_MODELS[mode];
+  const config: any = {
+    systemInstruction: "You are Gemini Nexus, a world-class AI assistant. Provide concise, accurate, and helpful answers."
+  };
 
-  constructor() {
-    // Note: In a real proxy scenario, you might modify the internal transport of the SDK
-    // to point to your Azure Function URL. For this implementation, we follow standard SDK usage.
-    this.ai = new GoogleGenAI({ apiKey: process.env.API_KEY || '' });
-    this.chatSession = this.ai.chats.create({
-      model: 'gemini-3-pro-preview',
-      config: {
-        systemInstruction: SYSTEM_INSTRUCTION,
-        temperature: 0.7,
-        topP: 0.95,
-      },
-    });
+  if (mode === ChatMode.THINKING) {
+    config.thinkingConfig = { thinkingBudget: 32768 };
   }
 
-  async sendMessage(message: string): Promise<string> {
-    try {
-      const response: GenerateContentResponse = await this.chatSession.sendMessage({ 
-        message 
-      });
-      return response.text || "I'm sorry, I couldn't generate a response.";
-    } catch (error) {
-      console.error("Gemini API Error:", error);
-      return "An error occurred while communicating with the AI. Check your connection or proxy settings.";
-    }
-  }
+  return ai.chats.create({
+    model: modelId,
+    config,
+    history: history as any
+  });
+};
 
-  async *sendMessageStream(message: string) {
-    try {
-      const stream = await this.chatSession.sendMessageStream({ message });
-      for await (const chunk of stream) {
-        const c = chunk as GenerateContentResponse;
-        yield c.text || "";
-      }
-    } catch (error) {
-      console.error("Gemini Streaming Error:", error);
-      yield "An error occurred while streaming.";
+export async function* sendMessageStream(chat: Chat, message: string) {
+  try {
+    const streamResponse = await chat.sendMessageStream({ message });
+    for await (const chunk of streamResponse) {
+      const c = chunk as GenerateContentResponse;
+      yield c.text || "";
     }
+  } catch (error) {
+    console.error("Gemini API Error:", error);
+    yield "Error: Failed to connect to AI service. Please check your connection and try again.";
   }
 }
-
-export const geminiService = new GeminiService();

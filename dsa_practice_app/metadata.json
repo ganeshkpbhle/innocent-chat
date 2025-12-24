@@ -1,6 +1,8 @@
-
 {
-  "name": "DSA Mentor Pro",
-  "description": "A focused AI-powered assistant designed for mastering Data Structures and Algorithms. Features a specialized tutor persona and architectural guidance for secure enterprise proxy deployments.",
-  "requestFramePermissions": []
+  "name": "Gemini Nexus Chat",
+  "description": "A sophisticated React-based chat application featuring multiple Gemini models including Pro, Fast, and Thinking modes, with full session persistence.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
 }

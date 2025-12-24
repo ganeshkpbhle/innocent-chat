@@ -1,17 +1,28 @@
 
-export enum Role {
-  USER = 'user',
-  MODEL = 'model',
-  SYSTEM = 'system'
+export enum ChatMode {
+  FAST = 'FAST',
+  PRO = 'PRO',
+  THINKING = 'THINKING'
 }
 
 export interface Message {
-  role: Role;
-  text: string;
+  id: string;
+  role: 'user' | 'model' | 'system';
+  content: string;
   timestamp: number;
 }
 
-export interface ChatSession {
+export interface Session {
   id: string;
+  title: string;
   messages: Message[];
+  mode: ChatMode;
+  updatedAt: number;
+}
+
+export interface ModelConfig {
+  name: string;
+  modelId: string;
+  description: string;
+  icon: string;
 }

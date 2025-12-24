@@ -4,72 +4,64 @@ using Microsoft.Extensions.Logging;
 using System.Net;
 using System.Net.Http;
 using System.Net.Http.Json;
+using System.Text;
 using System.Text.Json;
 
 public class GeminiProxyFunction
 {
-    private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger _logger;
-    private readonly string _apiKey;
+    private readonly HttpClient _httpClient;
+    private readonly string _geminiApiKey;
 
-    public GeminiProxyFunction(IHttpClientFactory httpClientFactory, ILoggerFactory loggerFactory)
+    public GeminiProxyFunction(ILoggerFactory loggerFactory, IHttpClientFactory httpClientFactory)
     {
-        _httpClientFactory = httpClientFactory;
         _logger = loggerFactory.CreateLogger<GeminiProxyFunction>();
-        _apiKey = Environment.GetEnvironmentVariable("GEMINI_API_KEY")
-            ?? throw new InvalidOperationException("GEMINI_API_KEY not configured");
+        _httpClient = httpClientFactory.CreateClient();
+
+        // Fetch API Key from Environment Variables
+        _geminiApiKey = Environment.GetEnvironmentVariable("GEMINI_API_KEY")
+                        ?? throw new ArgumentNullException("GEMINI_API_KEY is not configured.");
     }
 
     [Function("GeminiProxy")]
     public async Task<HttpResponseData> Run(
-        [HttpTrigger(AuthorizationLevel.Function, "post", Route = "gemini/proxy")]
-        HttpRequestData req)
+        [HttpTrigger(AuthorizationLevel.Function, "post", Route = "v1/models/{model}:generateContent")] HttpRequestData req,
+            string model)
     {
+        _logger.LogInformation($"Proxying request for model: {model}");
+
         try
         {
-            var envBase = Environment.GetEnvironmentVariable("GEMINI_API_BASE") ?? "https://generativelanguage.googleapis.com";
-            var modelName = Environment.GetEnvironmentVariable("MODEL_NAME") ?? "gemini-1.5-pro";
-            var timeoutMs = int.TryParse(Environment.GetEnvironmentVariable("TIMEOUT_MS"), out var t) ? t : 15000;
+            // 1. Read the body from the incoming request
+            string requestBody = await new StreamReader(req.Body).ReadToEndAsync();
 
-            var requestBody = await JsonSerializer.DeserializeAsync<Dictionary<string, object>>(req.Body,
-                new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+            // 2. Prepare the Google API URL
+            // Format: https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={API_KEY}
+            string googleApiUrl = $"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={_geminiApiKey}";
 
-            if (requestBody is null || !requestBody.TryGetValue("prompt", out var promptObj) || string.IsNullOrWhiteSpace(promptObj?.ToString()))
-            {
-                var bad = req.CreateResponse(HttpStatusCode.BadRequest);
-                await bad.WriteAsJsonAsync(new { error = "Missing 'prompt' in request body" });
-                return bad;
-            }
+            // 3. Forward the request to Google
+            var content = new StringContent(requestBody, Encoding.UTF8, "application/json");
 
-            var prompt = promptObj.ToString();
+            var response = await _httpClient.PostAsync(googleApiUrl, content);
 
-            var url = $"{envBase}/v1beta/models/{modelName}:generateContent?key={Uri.EscapeDataString(_apiKey)}";
-            var payload = new
-            {
-                contents = new[]
-                {
-                    new { role = "user", parts = new[] { new { text = prompt } } }
-                }
-            };
+            // 4. Create the response back to the client
+            var responseData = req.CreateResponse(response.StatusCode);
 
-            var client = _httpClientFactory.CreateClient("gemini");
-            client.Timeout = TimeSpan.FromMilliseconds(timeoutMs);
+            // Copy headers from Google (optional, but good for content-type)
+            responseData.Headers.Add("Content-Type", "application/json");
 
-            using var resp = await client.PostAsJsonAsync(url, payload);
-            var outResp = req.CreateResponse((HttpStatusCode)resp.StatusCode);
-            var respJson = await resp.Content.ReadAsStringAsync();
+            // Stream the response back
+            var responseBody = await response.Content.ReadAsStringAsync();
+            await responseData.WriteStringAsync(responseBody);
 
-            outResp.Headers.Add("Content-Type", "application/json");
-            await outResp.WriteStringAsync(respJson);
-
-            return outResp;
+            return responseData;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Gemini proxy error");
-            var err = req.CreateResponse(HttpStatusCode.InternalServerError);
-            await err.WriteAsJsonAsync(new { error = "Proxy failed", details = ex.Message });
-            return err;
+            _logger.LogError($"Error in Proxy: {ex.Message}");
+            var errorResponse = req.CreateResponse(HttpStatusCode.InternalServerError);
+            await errorResponse.WriteStringAsync("Internal Server Error occurred in the proxy.");
+            return errorResponse;
         }
     }
 }

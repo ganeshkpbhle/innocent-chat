@@ -1,55 +1,92 @@
 
-import React, { useState } from 'react';
-import ChatWindow from './components/ChatWindow';
-import AzureProxyGuide from './components/AzureProxyGuide';
+import React, { useState, useEffect, useCallback } from 'react';
+import { Sidebar } from './components/Sidebar';
+import { ChatInterface } from './components/ChatInterface';
+import { ChatMode, Message, Session } from './types';
+import { v4 as uuidv4 } from 'uuid';
+
+const STORAGE_KEY = 'gemini_nexus_sessions';
 
 const App: React.FC = () => {
-  const [activeTab, setActiveTab] = useState<'chat' | 'proxy'>('chat');
+  const [sessions, setSessions] = useState<Session[]>([]);
+  const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
+  const [chatMode, setChatMode] = useState<ChatMode>(ChatMode.FAST);
+
+  // Load sessions from localStorage on mount
+  useEffect(() => {
+    const saved = localStorage.getItem(STORAGE_KEY);
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        setSessions(parsed);
+        if (parsed.length > 0) {
+          setCurrentSessionId(parsed[0].id);
+          setChatMode(parsed[0].mode);
+        }
+      } catch (e) {
+        console.error("Failed to parse sessions", e);
+      }
+    }
+  }, []);
+
+  // Persist sessions
+  useEffect(() => {
+    if (sessions.length > 0) {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(sessions));
+    }
+  }, [sessions]);
+
+  const currentSession = sessions.find(s => s.id === currentSessionId);
+
+  const createNewSession = useCallback(() => {
+    const newSession: Session = {
+      id: uuidv4(),
+      title: 'New Chat',
+      messages: [],
+      mode: chatMode,
+      updatedAt: Date.now()
+    };
+    setSessions(prev => [newSession, ...prev]);
+    setCurrentSessionId(newSession.id);
+  }, [chatMode]);
+
+  const updateSessionMessages = useCallback((sessionId: string, messages: Message[]) => {
+    setSessions(prev => prev.map(s => {
+      if (s.id === sessionId) {
+        const title = messages.length > 0 && messages[0].role === 'user' 
+          ? messages[0].content.substring(0, 30) + (messages[0].content.length > 30 ? '...' : '')
+          : s.title;
+        return { ...s, messages, title, updatedAt: Date.now() };
+      }
+      return s;
+    }).sort((a, b) => b.updatedAt - a.updatedAt));
+  }, []);
+
+  const deleteSession = useCallback((sessionId: string) => {
+    setSessions(prev => prev.filter(s => s.id !== sessionId));
+    if (currentSessionId === sessionId) {
+      setCurrentSessionId(null);
+    }
+  }, [currentSessionId]);
 
   return (
-    <div className="min-h-screen flex flex-col md:flex-row bg-slate-50 p-4 gap-4 max-w-[1400px] mx-auto">
-      {/* Sidebar for Navigation (Mobile Sticky Top) */}
-      <div className="md:w-64 flex-shrink-0 flex md:flex-col gap-2 sticky top-4 z-10">
-        <button
-          onClick={() => setActiveTab('chat')}
-          className={`flex-1 md:flex-none flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${
-            activeTab === 'chat' 
-              ? 'bg-blue-600 text-white shadow-md' 
-              : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
-          }`}
-        >
-          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/><path d="M8 12h.01"/><path d="M12 12h.01"/><path d="M16 12h.01"/></svg>
-          <span className="font-semibold text-sm">Practice Chat</span>
-        </button>
-        <button
-          onClick={() => setActiveTab('proxy')}
-          className={`flex-1 md:flex-none flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${
-            activeTab === 'proxy' 
-              ? 'bg-blue-600 text-white shadow-md' 
-              : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
-          }`}
-        >
-          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-          <span className="font-semibold text-sm">Proxy Setup</span>
-        </button>
-
-        <div className="hidden md:block mt-auto p-4 bg-white rounded-xl border border-slate-200 text-xs text-slate-500">
-          <p className="font-bold mb-1 text-slate-800">Session Status</p>
-          <div className="flex items-center gap-2 mb-2">
-            <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
-            <span>Connected to Proxy</span>
-          </div>
-          <p>This app uses a session-based memory. Refreshing will reset the conversation.</p>
-        </div>
-      </div>
-
-      {/* Main Content Area */}
-      <main className="flex-1 flex flex-col min-h-[600px]">
-        {activeTab === 'chat' ? (
-          <ChatWindow />
-        ) : (
-          <AzureProxyGuide />
-        )}
+    <div className="flex h-screen w-full bg-slate-50 overflow-hidden">
+      <Sidebar 
+        sessions={sessions}
+        currentSessionId={currentSessionId}
+        onSelectSession={setCurrentSessionId}
+        onNewChat={createNewSession}
+        onDeleteSession={deleteSession}
+      />
+      
+      <main className="flex-1 flex flex-col relative h-full">
+        <ChatInterface 
+          session={currentSession}
+          onUpdateMessages={(messages) => currentSessionId && updateSessionMessages(currentSessionId, messages)}
+          onNewChat={createNewSession}
+          mode={chatMode}
+          onModeChange={setChatMode}
+        />
       </main>
     </div>
   );
